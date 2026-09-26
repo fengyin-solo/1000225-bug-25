@@ -28,6 +28,39 @@ class EntryPayload(BaseModel):
     remark: str | None = None
 
 
+class BatchActionPayload(BaseModel):
+    """批量动作请求：request_id 是幂等键，同一批次重复提交不会重复生效。"""
+
+    action: str
+    ids: list[int] = Field(default_factory=list)
+    request_id: str = ""
+
+
+class BatchItemResult(BaseModel):
+    """批量处理中单条记录的结果。"""
+
+    id: int
+    label: str | None = None
+    ok: bool
+    message: str
+    status: str | None = None
+
+
+class BatchActionResult(BaseModel):
+    """批量处理结果：逐条列出成功与失败，失败项可单独重试。"""
+
+    ok: bool
+    message: str
+    action: str = ""
+    request_id: str = ""
+    deduplicated: bool = False
+    total: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    duplicates_ignored: int = 0
+    results: list[BatchItemResult] = Field(default_factory=list)
+
+
 
 class ScriptEntry(BaseModel):
     """剧本明细结构。"""

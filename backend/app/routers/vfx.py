@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
+from app.schemas import ActionResult, BatchActionPayload, BatchActionResult, EntryPayload, PageResult
 from app.services.vfx import VfxService
 
 router = APIRouter(prefix="/api/vfx", tags=["特效制作"])
@@ -20,14 +20,42 @@ STATUSES = ["待制作", "制作中", "待审核", "已完成"]
 def list_entries(
     keyword: str | None = Query(default=None, description="按镜头编号检索"),
     status: str | None = Query(default=None, description="待制作、制作中、待审核、已完成"),
+    supplier: str | None = Query(default=None, description="按制作供应商过滤"),
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
-    """按镜头编号与状态过滤特效制作列表；没有数据时返回空页，不报错。"""
+    """按镜头编号、状态与制作供应商过滤特效制作列表；没有数据时返回空页，不报错。"""
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    items, total = service.list_entries(keyword=keyword, status=status, supplier=supplier, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/stats")
+def stats(
+    keyword: str | None = Query(default=None, description="按镜头编号检索"),
+    status: str | None = Query(default=None, description="待制作、制作中、待审核、已完成"),
+    supplier: str | None = Query(default=None, description="按制作供应商过滤"),
+) -> dict[str, Any]:
+    """概览统计：与列表共用同一套筛选口径，按供应商筛选后整组范围和数量一致。"""
+    return service.stats(keyword=keyword, status=status, supplier=supplier)
+
+
+@router.post("/batch-actions", response_model=BatchActionResult)
+def batch_actions(payload: BatchActionPayload) -> BatchActionResult:
+    """批量执行动作：逐条返回成功与失败；request_id 相同的重复提交直接回放首次结果，不重复生效。"""
+    return BatchActionResult(**service.run_batch(
+        action=payload.action,
+        entry_ids=payload.ids,
+        request_id=payload.request_id,
+    ))
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出特效制作清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "vfx", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -50,16 +78,9 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
-    """对单条特效镜头执行开始制作、提交审核、确认完成；不允许的动作会被拦下并说明原因。"""
+    """对单条特效镜头执行开始制作、提交审核、确认完成；状态不满足或动作不允许时会拦下并说明原因。"""
     action = str(payload.values.get("action") or "").strip()
     entry, message = service.run_action(entry_id, action)
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出特效制作清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "vfx", "total": total, "items": items}
